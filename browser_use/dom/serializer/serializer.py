@@ -858,8 +858,14 @@ class DOMTreeSerializer:
 		return False
 
 	@staticmethod
-	def serialize_tree(node: SimplifiedNode | None, include_attributes: list[str], depth: int = 0) -> str:
-		"""Serialize the optimized tree to string format."""
+	def serialize_tree(node: SimplifiedNode | None, include_attributes: list[str], depth: int = 0, remove_empty_nodes: bool = False) -> str:
+		"""Serialize the optimized tree to string format.
+
+		remove_empty_nodes: when True, non-interactive container elements are omitted from
+		the output (their line is skipped) but their children are still recursed so that
+		text content and any interactive descendants are preserved.  This keeps the axtree
+		compact when it is fed to a prompt-based LLM fallback.
+		"""
 		if not node:
 			return ''
 
@@ -867,7 +873,7 @@ class DOMTreeSerializer:
 		if hasattr(node, 'excluded_by_parent') and node.excluded_by_parent:
 			formatted_text = []
 			for child in node.children:
-				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, depth)
+				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, depth, remove_empty_nodes)
 				if child_text:
 					formatted_text.append(child_text)
 			return '\n'.join(formatted_text)
@@ -880,7 +886,25 @@ class DOMTreeSerializer:
 			# Skip displaying nodes marked as should_display=False
 			if not node.should_display:
 				for child in node.children:
-					child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, depth)
+					child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, depth, remove_empty_nodes)
+					if child_text:
+						formatted_text.append(child_text)
+				return '\n'.join(formatted_text)
+
+			# When remove_empty_nodes is enabled, drop non-interactive structural containers.
+			# Interactive elements, scrollable containers, iframes, and frames are always kept.
+			# The element's own line is suppressed but children are still recursed so that
+			# nested text nodes and interactive descendants remain visible.
+			is_any_scrollable_pre = node.original_node.is_actually_scrollable or node.original_node.is_scrollable
+			tag_upper = node.original_node.tag_name.upper()
+			if (
+				remove_empty_nodes
+				and not node.is_interactive
+				and not is_any_scrollable_pre
+				and tag_upper not in ('IFRAME', 'FRAME', 'SVG')
+			):
+				for child in node.children:
+					child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, depth, remove_empty_nodes)
 					if child_text:
 						formatted_text.append(child_text)
 				return '\n'.join(formatted_text)
@@ -1016,7 +1040,7 @@ class DOMTreeSerializer:
 
 			# Process shadow DOM children
 			for child in node.children:
-				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, next_depth)
+				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, next_depth, remove_empty_nodes)
 				if child_text:
 					formatted_text.append(child_text)
 
@@ -1039,7 +1063,7 @@ class DOMTreeSerializer:
 		# Process children (for non-shadow elements)
 		if node.original_node.node_type != NodeType.DOCUMENT_FRAGMENT_NODE:
 			for child in node.children:
-				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, next_depth)
+				child_text = DOMTreeSerializer.serialize_tree(child, include_attributes, next_depth, remove_empty_nodes)
 				if child_text:
 					formatted_text.append(child_text)
 
