@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from dotenv import load_dotenv
 
+from browser_use.agent.action_cache import ActionCache
 from browser_use.agent.cloud_events import (
 	CreateAgentOutputFileEvent,
 	CreateAgentSessionEvent,
@@ -184,6 +185,8 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		file_system_path: str | None = None,
 		task_id: str | None = None,
 		calculate_cost: bool = False,
+		cache_actions: bool = False,
+		cache_actions_path: str | Path | None = None,
 		display_files_in_done_text: bool = True,
 		include_tool_call_examples: bool = False,
 		vision_detail_level: Literal['auto', 'low', 'high'] = 'auto',
@@ -394,6 +397,16 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 		# Initialize history
 		self.history = AgentHistoryList(history=[], usage=None)
+
+		# Initialize action cache for converting agentic steps to deterministic automation
+		self.cache_actions = cache_actions
+		self.cache_actions_path = Path(cache_actions_path) if cache_actions_path else None
+		self.action_cache: ActionCache | None = None
+		if cache_actions:
+			self.action_cache = ActionCache(
+				task_description=task,
+				start_url='',
+			)
 
 		# Initialize agent directory
 		import time
@@ -1197,6 +1210,15 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 				self.state.last_result,
 				metadata,
 				state_message=self._message_manager.last_state_message_text,
+			)
+
+		# Record step in action cache if enabled
+		if self.action_cache and browser_state_summary:
+			self.action_cache.record_step(
+				step_number=self.state.n_steps,
+				model_output=self.state.last_model_output,
+				results=self.state.last_result,
+				browser_state=browser_state_summary,
 			)
 
 		# Log step completion summary
@@ -2306,6 +2328,15 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 			raise e
 
 		finally:
+			# Save action cache if enabled
+			if self.action_cache:
+				cache_path = self.cache_actions_path or Path('action_cache.json')
+				try:
+					self.action_cache.save(cache_path)
+					self.logger.info(f'[ActionCache] Saved to {cache_path}')
+				except Exception as cache_err:
+					self.logger.error(f'[ActionCache] Failed to save: {cache_err}')
+
 			if should_delay_close and self._demo_mode_enabled and agent_run_error is None:
 				await asyncio.sleep(30)
 			if agent_run_error:

@@ -900,8 +900,14 @@ class SerializedDOMState:
 	def llm_representation(
 		self,
 		include_attributes: list[str] | None = None,
+		remove_empty_nodes: bool = False,
 	) -> str:
-		"""Kinda ugly, but leaving this as an internal method because include_attributes are a parameter on the agent, so we need to leave it as a 2 step process"""
+		"""Kinda ugly, but leaving this as an internal method because include_attributes are a parameter on the agent, so we need to leave it as a 2 step process.
+
+		remove_empty_nodes: when True, non-interactive structural container elements are
+		omitted from the serialized output while their children (text nodes, interactive
+		elements) are preserved.  Reduces token usage when the axtree is used as a prompt.
+		"""
 		from browser_use.dom.serializer.serializer import DOMTreeSerializer
 
 		if not self._root:
@@ -909,7 +915,7 @@ class SerializedDOMState:
 
 		include_attributes = include_attributes or DEFAULT_INCLUDE_ATTRIBUTES
 
-		return DOMTreeSerializer.serialize_tree(self._root, include_attributes)
+		return DOMTreeSerializer.serialize_tree(self._root, include_attributes, remove_empty_nodes=remove_empty_nodes)
 
 	@observe_debug(ignore_input=True, ignore_output=True, name='eval_representation')
 	def eval_representation(
