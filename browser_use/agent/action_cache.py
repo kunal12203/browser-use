@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,7 +119,8 @@ class ActionCache:
 
 		Removes:
 		- Failed actions (errors)
-		- done actions (not replayable)
+		- done/wait actions (not replayable)
+		- Actions on elements with no buildable locator (skip links, misclicks)
 		- Consecutive duplicate actions on the same element
 		"""
 		successful = self.get_successful_actions()
@@ -126,7 +128,11 @@ class ActionCache:
 		seen_actions: set[str] = set()
 
 		for action in successful:
-			if action.action_type in ('done',):
+			if action.action_type in ('done', 'wait'):
+				continue
+
+			if action.element and not _has_usable_selector(action.element):
+				logger.debug(f'[ActionCache] Skipping action with no usable selector: step {action.step_number}')
 				continue
 
 			key = f'{action.action_type}:{json.dumps(action.action_params, sort_keys=True)}'
@@ -158,6 +164,27 @@ class ActionCache:
 		with open(path, 'w') as f:
 			json.dump(data, f, indent=2)
 		logger.info(f'[ActionCache] Saved {len(self.actions)} actions to {path}')
+
+
+def _has_usable_selector(element: dict[str, Any]) -> bool:
+	"""Check if an element has enough info to build a deterministic locator."""
+	attrs = element.get('attributes', {})
+	if attrs.get('data-test') or attrs.get('data-testid'):
+		return True
+	el_id = attrs.get('id', '')
+	if el_id and not re.search(r'[0-9a-f]{8,}', el_id) and not re.search(r'\d{5,}', el_id):
+		return True
+	if attrs.get('name'):
+		return True
+	if attrs.get('role') and element.get('ax_name'):
+		return True
+	if attrs.get('aria-label'):
+		return True
+	if attrs.get('placeholder'):
+		return True
+	if element.get('ax_name') and element.get('tag_name') in ('button', 'a', 'input', 'select', 'textarea'):
+		return True
+	return False
 
 
 def _short_element(el: dict[str, Any] | None) -> str:
